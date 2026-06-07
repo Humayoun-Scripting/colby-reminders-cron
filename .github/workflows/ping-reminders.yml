@@ -1,35 +1,26 @@
-name: Colby Reminders Clock
+name: Colby Reminders Clock (backup)
 
-# Independent clock for the Paid In Full reminder + value-track endpoint.
-# Vercel's native cron for the colby-paidinfull project does not fire (platform
-# issue, 2026-06-07). This drives the same endpoint from GitHub instead.
-# Each run polls once a minute for ~50 minutes, so a single scheduled firing gives
-# ~50 min of dense coverage. With concurrency queued (not cancelled), back-to-back
-# runs give near-continuous 60s-granularity coverage and barely depend on how often
-# GitHub's scheduler fires. The endpoint is idempotent (GHL "*-sent" dedup + tight
-# windows) so repeat hits never double-send. Public repo => unlimited Actions minutes.
-
+# TERTIARY backup clock only. The PRIMARY clock is the dedicated Vercel cron project
+# "colby-reminders-clock" (confirmed firing every 5 min). The booking webhook piggyback
+# is the secondary. This GitHub job is a lightweight extra net: short, 2 quick hits,
+# no long-running loop (so it never trips Actions abuse limits). Idempotent endpoint.
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
-
 concurrency:
   group: reminders-clock
-  cancel-in-progress: false
-
+  cancel-in-progress: true
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 4
     steps:
-      - name: Poll send-reminders once a minute for ~50 min
+      - name: Ping send-reminders twice
         env:
           URL: ${{ secrets.REMINDERS_PING_URL }}
         run: |
           if [ -z "$URL" ]; then echo "REMINDERS_PING_URL secret missing"; exit 1; fi
-          for i in $(seq 1 50); do
-            code=$(curl -s -o /tmp/out.json -w "%{http_code}" -m 45 --retry 2 "$URL" || echo "000")
-            echo "$(date -u +%H:%M:%S) hit $i -> HTTP $code :: $(head -c 160 /tmp/out.json)"
-            if [ "$i" -lt 50 ]; then sleep 58; fi
-          done
+          curl -s -o /dev/null -w "hit1 HTTP %{http_code}\n" -m 45 --retry 2 "$URL"
+          sleep 60
+          curl -s -o /dev/null -w "hit2 HTTP %{http_code}\n" -m 45 --retry 2 "$URL"
