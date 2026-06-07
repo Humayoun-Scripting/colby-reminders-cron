@@ -1,0 +1,32 @@
+name: Colby Reminders Clock
+
+# Independent 5-minute scheduler for the Paid In Full reminder + value-track cron.
+# Vercel's native cron for the colby-paidinfull project is not firing (platform issue,
+# diagnosed 2026-06-07), so this drives the same endpoint from GitHub instead.
+# The endpoint is idempotent (GHL "sent" dedup tags + tight time windows), so hitting it
+# multiple times per run is safe. We poll several times per run to absorb GitHub's
+# scheduler jitter and keep the tight 1h / 5min windows covered.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: reminders-clock
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poll send-reminders every ~60s for ~5 min
+        env:
+          URL: ${{ secrets.REMINDERS_PING_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "REMINDERS_PING_URL secret missing"; exit 1; fi
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /tmp/out.json -w "%{http_code}" -m 60 --retry 2 "$URL" || echo "000")
+            echo "hit $i -> HTTP $code :: $(head -c 200 /tmp/out.json)"
+            if [ "$i" -lt 5 ]; then sleep 55; fi
+          done
